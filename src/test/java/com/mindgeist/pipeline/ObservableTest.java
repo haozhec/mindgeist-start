@@ -128,6 +128,14 @@ public class ObservableTest {
 			return i;
 		};
 		
+		Observable<Integer> userObservable = server.increase(two.getValue())
+				.subscribeOn(Schedulers.computation())
+				.map(getUser);
+		
+		Observable<Integer> orderObservable = server.increase(two.getValue())
+				.subscribeOn(Schedulers.computation())
+				.map(getOrder);
+		
 		Func1<Integer,Observable<Integer>> getChain = (i) -> {
 			MutableInt state = new MutableInt(i);
 			server.increase(state.getValue()).subscribe(o -> {
@@ -146,32 +154,29 @@ public class ObservableTest {
 				state.setValue(o);
 				logger.info("get merchant " + state.getValue());
 			});
+			Observable.zip(userObservable,
+					orderObservable,
+					(u,o)-> 1);
 			logger.info("get chain");
 			return just(i);
 		};
 		
-		Observable<Integer> userObservable = server.increase(two.getValue())
-				.subscribeOn(Schedulers.computation())
-				.map(getUser);
 		
-		Observable<Integer> orderObservable = server.increase(two.getValue())
-				.subscribeOn(Schedulers.computation())
-				.map(getOrder);
 		
 		Action1<Integer> done = e -> logger.info("callback");
 		
 		Observable.zip(userObservable,
-				orderObservable
-				.flatMap(o -> {
-					return Observable.from(Arrays.asList(o,100)).parallel(oo -> {
-						return oo.flatMap(getChain);
-					}).toList();
-				}),
-				(a,b)-> 1).map(getRelevance).subscribe(done);
+				orderObservable.flatMap(o -> parallel(o, Arrays.asList(o,100), getChain)),
+				(u,o)-> 1).map(getRelevance).toBlocking().single();
 		
+		logger.info("all finished");
 		Thread.sleep(5000);
 		
 		assertEquals(3, two.getValue().intValue());
+	}
+	
+	private <T,R,U> Observable<R> parallel(R r, List<T> t, Func1<T,Observable<U>> func) {
+		return Observable.from(t).parallel(o -> o.flatMap(func)).toList().flatMap(l -> just(r));
 	}
 	
 	@Test
