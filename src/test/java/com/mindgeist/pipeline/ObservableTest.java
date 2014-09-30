@@ -7,12 +7,17 @@ import static rx.Observable.just;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Function;
 
+import org.apache.commons.lang3.mutable.MutableInt;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import rx.Observable;
+import rx.Scheduler;
+import rx.Subscriber;
+import rx.functions.Action1;
 import rx.functions.Func1;
 import rx.functions.FuncN;
 import rx.schedulers.Schedulers;
@@ -77,6 +82,96 @@ public class ObservableTest {
 		
 		assertEquals(3, results.size());
 		assertTrue(results.containsAll(Arrays.asList("2", "3", "4")));
+	}
+	
+	@Test
+	public void testZip() {
+		Observable.zip(just(1).subscribeOn(Schedulers.io()).flatMap(server::increase), just(2).subscribeOn(Schedulers.io()).flatMap(server::increase), (a,b)->a+b).toBlocking().single();	
+	}
+	
+	@Test
+	public void testMerge() throws InterruptedException {
+		MutableInt state = new MutableInt(1);
+		just(state.getValue()).subscribeOn(Schedulers.io())
+			.flatMap(server::increase).map(o -> {
+				state.setValue(o);
+				logger.info("sub onNext " + state.getValue());
+				return o;
+			}).concatWith(just(2).subscribeOn(Schedulers.io())
+			.flatMap(server::increase)).map(o -> {
+				state.setValue(o);
+				logger.info("sub onNext 2 " + state.getValue());
+				return o;
+			})
+				.finallyDo(()->logger.info("finished"))
+				.subscribe(i->logger.info("onNext " + i));
+		
+		Thread.sleep(1000);
+	}
+	
+	@Test
+	public void testSubscribe() throws InterruptedException {
+		MutableInt two = new MutableInt(1);
+		
+		Observable<Integer> observable = Observable.just(1);
+		
+		Func1<Integer,Integer> getUser = (i) -> {
+			logger.info("get user");
+			return i;
+		};
+		Func1<Integer,Integer> getOrder = (i) -> {
+			logger.info("get order");
+			return i;
+		};
+		Func1<Integer,Integer> getRelevance = (i) -> {
+			logger.info("get relevance");
+			return i;
+		};
+		
+		Func1<Integer,Observable<Integer>> getChain = (i) -> {
+			MutableInt state = new MutableInt(i);
+			server.increase(state.getValue()).subscribe(o -> {
+				state.setValue(o);
+				logger.info("get deal catalog " + state.getValue());
+			});
+			server.increase(state.getValue()).subscribe(o -> {
+				state.setValue(o);
+				logger.info("get gapi " + state.getValue());
+			});
+			server.increase(state.getValue()).subscribe(o -> {
+				state.setValue(o);
+				logger.info("get getway " + state.getValue());
+			});
+			server.increase(state.getValue()).subscribe(o -> {
+				state.setValue(o);
+				logger.info("get merchant " + state.getValue());
+			});
+			logger.info("get chain");
+			return just(i);
+		};
+		
+		Observable<Integer> userObservable = server.increase(two.getValue())
+				.subscribeOn(Schedulers.computation())
+				.map(getUser);
+		
+		Observable<Integer> orderObservable = server.increase(two.getValue())
+				.subscribeOn(Schedulers.computation())
+				.map(getOrder);
+		
+		Action1<Integer> done = e -> logger.info("callback");
+		
+		Observable.zip(userObservable,
+				orderObservable
+				.flatMap(o -> {
+					return Observable.from(Arrays.asList(o,100)).parallel(oo -> {
+						return oo.flatMap(getChain);
+					}).toList();
+				}),
+				(a,b)-> 1).map(getRelevance).subscribe(done);
+		
+		Thread.sleep(5000);
+		
+		assertEquals(3, two.getValue().intValue());
 	}
 	
 	@Test
